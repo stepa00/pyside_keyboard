@@ -1,10 +1,12 @@
-from PySide6.QtWidgets import (
-    QWidget, QPushButton, QGridLayout, QApplication, QLineEdit,
-    QVBoxLayout, QDialog, QSizePolicy, QStyleFactory
-)
-from PySide6.QtCore import Qt, QTimer, QObject, QEvent, QPoint
-from PySide6.QtGui import QCursor
 from functools import partial
+
+from PySide6.QtCore import Qt, QTimer, QObject, QEvent
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import (
+    QWidget, QPushButton, QGridLayout, QApplication, QVBoxLayout, QDialog,
+    QSizePolicy, QStyleFactory, QHBoxLayout
+)
+
 
 class OnScreenKeyboard(QDialog):
     def __init__(self, parent=None):
@@ -15,40 +17,40 @@ class OnScreenKeyboard(QDialog):
         self.setStyle(QStyleFactory.create("Fusion"))
 
         self.shifted = False
-        self.current_language = "EN"
+        self.symbol_mode = False
+        self.language = "EN"
         self.language_switch_locked = False
         self.last_input_widget = None
         self.hide_requested = False
 
         self.layouts = {
             "EN": [
-                ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "Backspace"],
                 ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
                 ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
-                ["Shift", "z", "x", "c", "v", "b", "n", "m", ",", "."],
-                ["EN", "Space", "Enter", "Done"]
+                ["Shift", "z", "x", "c", "v", "b", "n", "m", "Backspace"],
+                ["Sym", "Lang", ",", "Space", ".", "Enter", "Done"]
             ],
             "RU": [
-                ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "Backspace"],
-                ["й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х"],
+                ["й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х", "ъ"],
                 ["ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э"],
-                ["Shift", "я", "ч", "с", "м", "и", "т", "ь", "б", "ю", "ъ"],
-                ["RU", "Space", "Enter", "Done"]
+                ["Shift", "я", "ч", "с", "м", "и", "т", "ь", "б", "ю", "Backspace"],
+                ["Sym", "Lang", ",", "Space", ".", "Enter", "Done"]
             ]
         }
 
-        self.shift_maps = {
-            "EN": {
-                "1": "!", "2": "@", "3": "#", "4": "$", "5": "%",
-                "6": "^", "7": "&", "8": "*", "9": "(", "0": ")",
-                ",": "<", ".": ">"
-            },
-            "RU": {
-                "1": "!", "2": "\"", "3": "№", "4": ";", "5": "%",
-                "6": ":", "7": "?", "8": "*", "9": "(", "0": ")",
-                ",": "<", ".": ">"
-            }
-        }
+        self.symbol_layout = [
+            ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")"],
+            ["-", "_", "=", "+", "[", "]", "{", "}", "\\", "|"],
+            ["Shift", ";", ":", "'", '"', "<", ">", "/", "?", "`", "~", "Backspace"],
+            ["ABC", "Lang", ",", "Space", ".", "Enter", "Done"]
+        ]
+
+        self.numpad_layout = [
+            ["1", "2", "3"],
+            ["4", "5", "6"],
+            ["7", "8", "9"],
+            ["0"]
+        ]
 
         self.init_ui()
 
@@ -60,49 +62,54 @@ class OnScreenKeyboard(QDialog):
         self.done_cooldown_timer.setSingleShot(True)
         self.done_cooldown_timer.timeout.connect(self.reset_hide_flag)
 
-        self.lang_switch_timer = QTimer(self)
-        self.lang_switch_timer.setSingleShot(True)
-        self.lang_switch_timer.timeout.connect(self.unlock_language_switch)
-
         QApplication.instance().installEventFilter(self)
 
     def init_ui(self):
-        self.layout = QVBoxLayout(self)
-        self.grid = QGridLayout()
-        self.layout.addLayout(self.grid)
+        self.layout = QHBoxLayout(self)
+        self.letter_grid = QGridLayout()
+        self.numpad_grid = QGridLayout()
+        self.layout.addLayout(self.letter_grid, 3)
+        self.layout.addLayout(self.numpad_grid, 1)
         self.setLayout(self.layout)
         self.build_keys()
 
+    def clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+
     def build_keys(self):
-        for i in reversed(range(self.grid.count())):
-            self.grid.itemAt(i).widget().setParent(None)
+        self.clear_layout(self.letter_grid)
+        self.clear_layout(self.numpad_grid)
         self.buttons = []
 
-        layout = self.layouts[self.current_language]
-
+        layout = self.symbol_layout if self.symbol_mode else self.layouts[self.language]
         for row_idx, row in enumerate(layout):
             col_pos = 0
             for key in row:
-                if not isinstance(key, str):
-                    continue
-                btn = QPushButton(str(key))
+                btn = QPushButton(key)
                 btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 btn.setMinimumHeight(50)
                 btn.setStyleSheet("font-size: 18px;")
                 btn.clicked.connect(partial(self.key_pressed, key))
                 self.buttons.append(btn)
-
-                span = 1
-                if key == "Space":
-                    span = 5
-                elif key == "Done":
-                    span = 2
-                elif key == "Enter":
-                    span = 2
-                self.grid.addWidget(btn, row_idx, col_pos, 1, span)
+                span = 4 if key == "Space" else 1
+                self.letter_grid.addWidget(btn, row_idx, col_pos, 1, span)
                 col_pos += span
 
+        for row_idx, row in enumerate(self.numpad_layout):
+            for col_idx, key in enumerate(row):
+                btn = QPushButton(key)
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                btn.setMinimumHeight(50)
+                btn.setStyleSheet("font-size: 18px;")
+                btn.clicked.connect(partial(self.key_pressed, key))
+                self.buttons.append(btn)
+                self.numpad_grid.addWidget(btn, row_idx, col_idx)
+
         self.update_keys()
+
 
     def resolve_input_target(self, widget):
         return widget
@@ -112,12 +119,24 @@ class OnScreenKeyboard(QDialog):
         return hasattr(widget, 'insert') and callable(widget.insert)
 
     def key_pressed(self, key):
-        if key in ("EN", "RU"):
-            if not self.language_switch_locked:
-                self.current_language = "RU" if self.current_language == "EN" else "EN"
-                self.language_switch_locked = True
-                self.build_keys()
-                self.lang_switch_timer.start(200)
+        if key == "Sym":
+            self.symbol_mode = True
+            self.shifted = False
+            self.build_keys()
+            return
+        if key == "ABC":
+            self.symbol_mode = False
+            self.shifted = False
+            self.build_keys()
+            return
+        if key == "Lang":
+            self.language = "RU" if self.language == "EN" else "EN"
+            self.build_keys()
+            return
+
+        if key == "Shift":
+            self.shifted = not self.shifted
+            self.update_keys()
             return
 
         widget = self.resolve_input_target(self.last_input_widget)
@@ -135,13 +154,11 @@ class OnScreenKeyboard(QDialog):
         elif key == "Enter":
             if hasattr(widget, 'returnPressed'):
                 widget.returnPressed.emit()
+            elif hasattr(widget, 'insert'):
+                widget.insert("\n")
 
         elif key == "Space":
             widget.insert(" ")
-
-        elif key == "Shift":
-            self.shifted = not self.shifted
-            self.update_keys()
 
         elif key == "Done":
             self.hide_requested = True
@@ -152,32 +169,16 @@ class OnScreenKeyboard(QDialog):
             self.done_cooldown_timer.start(500)
 
         else:
-            char = self.get_shifted_char(key)
+            char = key.upper() if self.shifted and not self.symbol_mode else key.lower()
             widget.insert(char)
 
-    def get_shifted_char(self, key):
-        functional_keys = ("Backspace", "Shift", "Enter", "Space", "Done", "EN", "RU")
-        if key in functional_keys:
-            return key
-
-        shift_map = self.shift_maps.get(self.current_language, {})
-        if self.shifted:
-            return shift_map.get(key, key.upper())
-        return key.lower()
-
     def update_keys(self):
-        layout = self.layouts[self.current_language]
-        for i, row in enumerate(layout):
-            for j, key in enumerate(row):
-                index = sum(len(r) for r in layout[:i]) + j
-                if index >= len(self.buttons):
-                    continue
-                btn = self.buttons[index]
-                label = self.get_shifted_char(key)
-                if label == "&":
-                    btn.setText("&&")
-                else:
-                    btn.setText(label)
+        for btn in self.buttons:
+            key = btn.text().replace("&&", "&")
+            if key in ("Shift", "Space", "Sym", "ABC", "Lang", "Done", "Enter", "Backspace"):
+                continue
+            label = key.upper() if self.shifted and not self.symbol_mode else key.lower()
+            btn.setText("&&" if label == "&" else label)
 
     def check_focus(self):
         if self.hide_requested:
@@ -192,13 +193,7 @@ class OnScreenKeyboard(QDialog):
     def reset_hide_flag(self):
         self.hide_requested = False
 
-    def unlock_language_switch(self):
-        self.language_switch_locked = False
-
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        if not isinstance(obj, QObject) or not isinstance(event, QEvent):
-            return False
-
         if self.hide_requested:
             return False
 
